@@ -1,52 +1,62 @@
-# YTDWN - Professional YouTube Downloader
+# YTDWN - Premium YouTube Downloader
 
-A modern, clean, and efficient YouTube video and audio downloader desktop application.
+![Version](https://img.shields.io/badge/version-2.0.0-purple.svg) ![Platform](https://img.shields.io/badge/platform-windows-blue.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-## Features
+**YTDWN** is a professional-grade desktop application for downloading YouTube content in the highest available quality. Built with a modern, dark-themed UI, it offers a seamless user experience for creators, archivists, and power users.
 
-- **Highest Quality Video**: Downloads up to 4K/8K (merges video+audio automatically).
-- **Highest Quality MP3**: Extracts and converts audio to MP3.
-- **Modern UI**: Dark-themed, responsive, and user-friendly interface.
-- **Queue System**: Process runs in background without freezing UI.
-- **FFmpeg Integration**: Uses FFmpeg for robust media processing.
+## ✨ Features
 
-## Installation
+- **💎 Modern Dark UI**: A sleek, minimal interface designed for Windows 10/11.
+- **🎬 4K/8K Video Support**: Automatically grabs the highest resolution video stream and merges it with the best audio track.
+- **🎵 High-Fidelity Audio**: Extracts audio and converts it to crystal-clear MP3 (320kbps equivalent).
+- **🚀 Multi-threaded Core**: Downloads run in the background, ensuring the UI remains responsive.
+- **🛠 FFmpeg Powered**: Uses industry-standard FFmpeg for robust media processing.
+- **📦 Portable Ready**: Can be packaged into a single lightweight `.exe` file.
 
-1. Clone or download this repository.
-2. Install Python 3.8+.
-3. Install dependencies:
+## 📥 Installation
+
+### Prerequisites
+- Python 3.8+
+- [FFmpeg](https://ffmpeg.org/download.html) (Must be added to System PATH)
+
+### Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/ytdwn.git
+   cd ytdwn
+   ```
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Ensure **FFmpeg** is installed and added to your system PATH.
 
-## Usage
+## 🚀 Usage
 
 Run the application:
 ```bash
 python main.py
 ```
 
-1. Paste a YouTube URL.
-2. Select **Video** or **MP3**.
-3. Click **DOWNLOAD**.
-4. Files are saved to `C:\Users\<YourUser>\Downloads\YouTube`.
+1. **Paste URL**: Enter a valid YouTube link.
+2. **Select Mode**: Choose between **High Quality Video** or **MP3 Audio**.
+3. **Download**: Click the button and watch the progress.
+4. **Locate Files**: Content is saved to `C:\Users\<You>\Downloads\YouTube`.
 
-## Building for Windows (.exe)
+## 📦 Build for Production (EXE)
 
-To package the application as a standalone executable:
+To create a standalone executable for distribution:
 
-1. Install PyInstaller:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Run the build command:
-   ```bash
-   pyinstaller --noconfirm --onefile --windowed --icon "assets/icon.ico" --name "YTDownloader" --add-data "assets;assets" main.py
-   ```
-   *(Note: Ensure you have an `assets/icon.ico` file, or remove the `--icon` flag if not).*
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm --onefile --windowed --icon "assets/icon.ico" --name "YTDWN" --add-data "assets;assets" main.py
+```
 
-## Dependencies
+## 🏗 Tech Stack
 
-- [pytubefix](https://github.com/JuanBindez/pytubefix)
-- [FFmpeg](https://ffmpeg.org/) (External Dependency)
+- **Frontend**: Python Tkinter (Custom Styling)
+- **Backend**: Pytubefix
+- **Processing**: FFmpeg
+- **Packaging**: PyInstaller
+
+---
+*Designed for performance and aesthetics.*
