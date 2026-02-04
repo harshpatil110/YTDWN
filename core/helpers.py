@@ -8,7 +8,7 @@ def safe_filename(name):
     return "".join(c for c in name if c not in r'\/:*?"<>|')
 
 def get_default_download_path():
-    """
+    r"""
     Get the default download path: C:\Users\<Current User>\Downloads\YouTube
     """
     # os.path.expanduser("~") gets the user's home directory across platforms
