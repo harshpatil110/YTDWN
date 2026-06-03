@@ -1,9 +1,19 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import urllib.request
+import io
+import datetime
 from core.downloader import Downloader
-from core.helpers import get_default_download_path, resource_path
-import os
+from core.helpers import get_default_download_path, resource_path, setup_logging
+
+logger = setup_logging()
+
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 # --- STITCH DESIGN TOKENS ---
 COLOR_BG = "#FBF9F4"
@@ -18,7 +28,7 @@ COLOR_SUCCESS = "#4ADE80"
 COLOR_ERROR = "#BA1A1A"
 
 FONT_FAMILY = "Segoe UI"
-FONT_TITLE = (FONT_FAMILY, 32, "bold")
+FONT_TITLE = (FONT_FAMILY, 24, "bold")
 FONT_SUBTITLE = (FONT_FAMILY, 14)
 FONT_LABEL = (FONT_FAMILY, 10, "bold")
 FONT_INPUT = (FONT_FAMILY, 12)
@@ -26,6 +36,16 @@ FONT_BUTTON = (FONT_FAMILY, 12, "bold")
 FONT_CARD_TITLE = (FONT_FAMILY, 12, "bold")
 FONT_CARD_SUBTITLE = (FONT_FAMILY, 10)
 FONT_STATUS = (FONT_FAMILY, 10)
+
+def format_duration(seconds):
+    if not seconds:
+        return "N/A"
+    return str(datetime.timedelta(seconds=int(seconds)))
+
+def format_views(views):
+    if not views:
+        return "N/A"
+    return f"{int(views):,}"
 
 class FlatButton(tk.Button):
     def __init__(self, master, **kwargs):
@@ -102,7 +122,7 @@ class StitchQualityCard(tk.Frame):
         super().__init__(master, bg=COLOR_SURFACE, highlightbackground=COLOR_BORDER, highlightthickness=1, cursor="hand2", **kwargs)
         self.mode = mode
         self.stream_info = stream_info
-        self.itag = stream_info['itag']
+        self.itag = stream_info.get('itag')
         self.on_select = on_select
         
         self.pack(fill="x", pady=4, padx=4)
@@ -111,8 +131,12 @@ class StitchQualityCard(tk.Frame):
         self.bind("<Leave>", self.on_leave)
         self.bind("<Button-1>", self.select)
         
-        title_text = f"{stream_info.get('resolution', stream_info.get('abr'))} | {stream_info['mime_type'].split('/')[1].upper()}"
-        subtitle_text = stream_info['filesize_str']
+        if mode == "video":
+            title_text = f"{stream_info.get('resolution', 'N/A')} | {stream_info.get('format', 'UNKNOWN')}"
+            subtitle_text = f"{stream_info.get('fps', 'N/A')} FPS | {stream_info.get('codec', 'N/A')} | {stream_info.get('filesize_str', 'Unknown')}"
+        else:
+            title_text = f"{stream_info.get('abr', 'N/A')} | {stream_info.get('format', 'UNKNOWN')}"
+            subtitle_text = f"{stream_info.get('codec', 'N/A')} | {stream_info.get('filesize_str', 'Unknown')}"
         
         content_frame = tk.Frame(self, bg=COLOR_SURFACE)
         content_frame.pack(fill="x", padx=10, pady=10)
@@ -165,15 +189,14 @@ class StitchQualityCard(tk.Frame):
             self.lbl_title.config(bg=COLOR_SURFACE)
             self.lbl_subtitle.config(bg=COLOR_SURFACE)
 
-
 class YouTubeDownloaderApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
         self.title("YTDWN - Professional YouTube Downloader")
-        self.geometry("900x800")
+        self.geometry("1000x850")
         self.configure(bg=COLOR_BG)
-        self.minsize(800, 600)
+        self.minsize(900, 700)
 
         try:
             icon_path = resource_path("assets/icon.ico")
@@ -192,11 +215,18 @@ class YouTubeDownloaderApp(tk.Tk):
         self.url_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar(value=0)
+        
+        # Metadata Vars
         self.video_title_var = tk.StringVar(value="Video Information")
+        self.channel_name_var = tk.StringVar(value="Channel")
+        self.duration_var = tk.StringVar(value="00:00")
+        self.views_var = tk.StringVar(value="0")
+        self.date_var = tk.StringVar(value="N/A")
 
         self.selected_mode = None
         self.selected_itag = None
         self.cards = []
+        self.thumbnail_image = None
 
         self.configure_styles()
         self.create_widgets()
@@ -229,7 +259,7 @@ class YouTubeDownloaderApp(tk.Tk):
         lbl_icon = tk.Label(icon_box, text="↓", font=("Arial", 20, "bold"), bg=COLOR_BG, fg=COLOR_PRIMARY)
         lbl_icon.pack(expand=True)
 
-        lbl_title = tk.Label(header_frame, text="YTDWN", font=FONT_TITLE, bg=COLOR_BG, fg=COLOR_PRIMARY)
+        lbl_title = tk.Label(header_frame, text="YTDWN", font=(FONT_FAMILY, 32, "bold"), bg=COLOR_BG, fg=COLOR_PRIMARY)
         lbl_title.pack(side="top", anchor="center")
 
         lbl_subtitle = tk.Label(header_frame, text="Professional YouTube Downloader", font=FONT_SUBTITLE, bg=COLOR_BG, fg=COLOR_SECONDARY)
@@ -268,17 +298,44 @@ class YouTubeDownloaderApp(tk.Tk):
         # 3. Streams Section (Two-Column Grid)
         self.streams_grid = tk.Frame(self.results_container, bg=COLOR_BG)
         self.streams_grid.pack(fill="both", expand=True, pady=(0, 20))
-        self.streams_grid.columnconfigure(0, weight=1)
-        self.streams_grid.columnconfigure(1, weight=1)
+        self.streams_grid.columnconfigure(0, weight=1, minsize=350)
+        self.streams_grid.columnconfigure(1, weight=1, minsize=350)
 
-        # Left Column: Video Details
+        # --- LEFT COLUMN: Video Details ---
         details_col = tk.Frame(self.streams_grid, bg=COLOR_BG)
         details_col.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
-        self.lbl_video_title = tk.Label(details_col, textvariable=self.video_title_var, font=FONT_TITLE, bg=COLOR_BG, fg=COLOR_PRIMARY, wraplength=400, justify="left", anchor="nw")
-        self.lbl_video_title.pack(fill="both", expand=True, pady=(0, 10))
+        # Thumbnail Placeholder
+        self.thumbnail_lbl = tk.Label(details_col, text="Thumbnail Loading...", bg=COLOR_BORDER, fg=COLOR_SECONDARY, font=FONT_LABEL)
+        self.thumbnail_lbl.pack(fill="x", pady=(0, 15), ipady=60)
 
-        # Right Column: Qualities
+        self.lbl_video_title = tk.Label(details_col, textvariable=self.video_title_var, font=FONT_TITLE, bg=COLOR_BG, fg=COLOR_PRIMARY, wraplength=400, justify="left", anchor="nw")
+        self.lbl_video_title.pack(fill="x", pady=(0, 10))
+
+        meta_frame = tk.Frame(details_col, bg=COLOR_BG)
+        meta_frame.pack(fill="x")
+
+        # Channel
+        channel_lbl = tk.Label(meta_frame, text="Channel", font=FONT_LABEL, bg=COLOR_BG, fg=COLOR_SECONDARY)
+        channel_lbl.grid(row=0, column=0, sticky="w", pady=(5, 5))
+        tk.Label(meta_frame, textvariable=self.channel_name_var, font=FONT_STATUS, bg=COLOR_BG, fg=COLOR_PRIMARY).grid(row=0, column=1, sticky="w", padx=(10, 0))
+
+        # Duration
+        dur_lbl = tk.Label(meta_frame, text="Duration", font=FONT_LABEL, bg=COLOR_BG, fg=COLOR_SECONDARY)
+        dur_lbl.grid(row=1, column=0, sticky="w", pady=(5, 5))
+        tk.Label(meta_frame, textvariable=self.duration_var, font=FONT_STATUS, bg=COLOR_BG, fg=COLOR_PRIMARY).grid(row=1, column=1, sticky="w", padx=(10, 0))
+
+        # Date
+        date_lbl = tk.Label(meta_frame, text="Upload Date", font=FONT_LABEL, bg=COLOR_BG, fg=COLOR_SECONDARY)
+        date_lbl.grid(row=2, column=0, sticky="w", pady=(5, 5))
+        tk.Label(meta_frame, textvariable=self.date_var, font=FONT_STATUS, bg=COLOR_BG, fg=COLOR_PRIMARY).grid(row=2, column=1, sticky="w", padx=(10, 0))
+
+        # Views
+        views_lbl = tk.Label(meta_frame, text="View Count", font=FONT_LABEL, bg=COLOR_BG, fg=COLOR_SECONDARY)
+        views_lbl.grid(row=3, column=0, sticky="w", pady=(5, 5))
+        tk.Label(meta_frame, textvariable=self.views_var, font=FONT_STATUS, bg=COLOR_BG, fg=COLOR_PRIMARY).grid(row=3, column=1, sticky="w", padx=(10, 0))
+
+        # --- RIGHT COLUMN: Qualities ---
         qualities_col = tk.Frame(self.streams_grid, bg=COLOR_BG)
         qualities_col.grid(row=0, column=1, sticky="nsew", padx=(15, 0))
 
@@ -368,6 +425,8 @@ class YouTubeDownloaderApp(tk.Tk):
         self.cards.clear()
         self.selected_mode = None
         self.selected_itag = None
+        self.thumbnail_lbl.config(image='', text="Thumbnail Loading...")
+        self.thumbnail_image = None
 
     def on_card_select(self, clicked_card):
         # Deselect all
@@ -378,6 +437,7 @@ class YouTubeDownloaderApp(tk.Tk):
         clicked_card.set_selected(True)
         self.selected_mode = clicked_card.mode
         self.selected_itag = clicked_card.itag
+        logger.info(f"Selected {clicked_card.mode} stream, itag: {clicked_card.itag}")
 
     def fetch_streams_thread(self):
         url = self.url_var.get().strip()
@@ -398,6 +458,27 @@ class YouTubeDownloaderApp(tk.Tk):
         self.clear_cards()
 
         threading.Thread(target=self.run_fetch_streams, args=(url,), daemon=True).start()
+
+    def load_thumbnail(self, url):
+        try:
+            if not HAS_PIL:
+                self.thumbnail_lbl.after(0, lambda: self.thumbnail_lbl.config(text="Thumbnail N/A (Requires Pillow)"))
+                return
+
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as u:
+                raw_data = u.read()
+            
+            image = Image.open(io.BytesIO(raw_data))
+            # Resize image to fit nicely in the UI
+            image.thumbnail((400, 300))
+            photo = ImageTk.PhotoImage(image)
+            
+            self.thumbnail_image = photo
+            self.thumbnail_lbl.after(0, lambda: self.thumbnail_lbl.config(image=photo, text=""))
+        except Exception as e:
+            logger.warning(f"Failed to load thumbnail: {e}")
+            self.thumbnail_lbl.after(0, lambda: self.thumbnail_lbl.config(text="Thumbnail Unavailable"))
 
     def run_fetch_streams(self, url):
         def ui_callback(status_type, message, progress):
@@ -437,6 +518,21 @@ class YouTubeDownloaderApp(tk.Tk):
             self.btn_enter.config(state="normal")
             self.status_var.set("Ready to download")
             
+            # Populate Video Info
+            v_info = message.get("video_info", {})
+            self.video_title_var.set(v_info.get("title", "Unknown Title"))
+            self.channel_name_var.set(v_info.get("author", "Unknown Author"))
+            self.duration_var.set(format_duration(v_info.get("length", 0)))
+            self.views_var.set(format_views(v_info.get("views", 0)))
+            self.date_var.set(str(v_info.get("publish_date", "N/A")))
+
+            # Load thumbnail async
+            thumb_url = v_info.get("thumbnail_url")
+            if thumb_url:
+                threading.Thread(target=self.load_thumbnail, args=(thumb_url,), daemon=True).start()
+            else:
+                self.thumbnail_lbl.config(text="No Thumbnail Provided")
+
             videos = message.get("video", [])
             for v in videos:
                 card = StitchQualityCard(self.scroll_video.scrollable_frame, mode="video", stream_info=v, on_select=self.on_card_select)
@@ -451,10 +547,7 @@ class YouTubeDownloaderApp(tk.Tk):
             self.progress_var.set(progress)
             self.status_var.set(message)
         elif status_type == "info":
-            # Extract video title from info if it matches "Found: {title}..."
-            if isinstance(message, str) and message.startswith("Found: "):
-                title = message.replace("Found: ", "").replace("...", "")
-                self.video_title_var.set(title)
+            # Just log/status it
             self.status_var.set(message)
         elif status_type == "success":
             self.progress_var.set(100)
