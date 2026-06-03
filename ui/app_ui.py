@@ -89,33 +89,6 @@ class FlatEntry(tk.Frame):
         )
         self.entry.pack(fill="both", expand=True, ipady=8, padx=5)
 
-class ScrollableFrame(tk.Frame):
-    def __init__(self, container, *args, **kwargs):
-        super().__init__(container, *args, **kwargs)
-        self.canvas = tk.Canvas(self, bg=COLOR_SURFACE, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = tk.Frame(self.canvas, bg=COLOR_SURFACE)
-
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(
-                scrollregion=self.canvas.bbox("all")
-            )
-        )
-
-        self.window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.bind('<Configure>', self.on_canvas_configure)
-
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-
-    def on_canvas_configure(self, event):
-        self.canvas.itemconfig(self.window_id, width=event.width)
-
-    def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
 class StitchQualityCard(tk.Frame):
     def __init__(self, master, mode, stream_info, on_select, **kwargs):
@@ -242,14 +215,43 @@ class YouTubeDownloaderApp(tk.Tk):
             borderwidth=0,
             thickness=8
         )
-        style.configure("Vertical.TScrollbar", background=COLOR_SURFACE, troughcolor=COLOR_SURFACE, borderwidth=0, arrowcolor=COLOR_PRIMARY)
+        style.configure("Vertical.TScrollbar", background=COLOR_BG, troughcolor=COLOR_BG, borderwidth=0, arrowcolor=COLOR_PRIMARY)
+
+    def _on_canvas_configure(self, event):
+        self.main_canvas.itemconfig(self.canvas_window_id, width=event.width)
+
+    def _on_mousewheel(self, event):
+        self.main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def create_widgets(self):
-        self.main_container = tk.Frame(self, bg=COLOR_BG)
-        self.main_container.pack(expand=True, fill="both", padx=60, pady=40)
+        # Global Scroll Architecture
+        self.main_canvas = tk.Canvas(self, bg=COLOR_BG, highlightthickness=0)
+        self.main_scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview, style="Vertical.TScrollbar")
+        
+        self.main_container = tk.Frame(self.main_canvas, bg=COLOR_BG)
+        
+        self.main_container.bind(
+            "<Configure>",
+            lambda e: self.main_canvas.configure(
+                scrollregion=self.main_canvas.bbox("all")
+            )
+        )
+        
+        self.canvas_window_id = self.main_canvas.create_window((0, 0), window=self.main_container, anchor="nw")
+        self.main_canvas.bind('<Configure>', self._on_canvas_configure)
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+        
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+        self.main_scrollbar.pack(side="right", fill="y")
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
+
+        # Build content directly into the scrollable self.main_container
+        # We need an inner wrapper to enforce padding matching the old behavior
+        self.content_wrapper = tk.Frame(self.main_container, bg=COLOR_BG)
+        self.content_wrapper.pack(expand=True, fill="both", padx=60, pady=40)
 
         # 1. Header Section
-        header_frame = tk.Frame(self.main_container, bg=COLOR_BG)
+        header_frame = tk.Frame(self.content_wrapper, bg=COLOR_BG)
         header_frame.pack(fill="x", pady=(0, 30))
 
         # Arrow down placeholder box
@@ -266,7 +268,7 @@ class YouTubeDownloaderApp(tk.Tk):
         lbl_subtitle.pack(side="top", anchor="center")
 
         # 2. URL Input Panel
-        input_panel = tk.Frame(self.main_container, bg=COLOR_SURFACE, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        input_panel = tk.Frame(self.content_wrapper, bg=COLOR_SURFACE, highlightbackground=COLOR_BORDER, highlightthickness=1)
         input_panel.pack(fill="x", pady=(0, 20))
         
         input_inner = tk.Frame(input_panel, bg=COLOR_SURFACE)
@@ -293,7 +295,7 @@ class YouTubeDownloaderApp(tk.Tk):
         self.btn_enter.pack(side="right", padx=(15, 0), ipady=8, ipadx=20)
 
         # Container for everything that is hidden initially
-        self.results_container = tk.Frame(self.main_container, bg=COLOR_BG)
+        self.results_container = tk.Frame(self.content_wrapper, bg=COLOR_BG)
 
         # 3. Streams Section (Two-Column Grid)
         self.streams_grid = tk.Frame(self.results_container, bg=COLOR_BG)
@@ -346,8 +348,8 @@ class YouTubeDownloaderApp(tk.Tk):
         lbl_video_q = tk.Label(video_card, text="AVAILABLE VIDEO QUALITIES", font=FONT_LABEL, bg=COLOR_SURFACE, fg=COLOR_SECONDARY)
         lbl_video_q.pack(anchor="w", padx=15, pady=(15, 5))
         
-        self.scroll_video = ScrollableFrame(video_card)
-        self.scroll_video.pack(fill="both", expand=True, padx=10, pady=(0, 15))
+        self.video_list_frame = tk.Frame(video_card, bg=COLOR_SURFACE)
+        self.video_list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 15))
 
         # Audio Qualities Card
         audio_card = tk.Frame(qualities_col, bg=COLOR_SURFACE, highlightbackground=COLOR_BORDER, highlightthickness=1)
@@ -356,8 +358,8 @@ class YouTubeDownloaderApp(tk.Tk):
         lbl_audio_q = tk.Label(audio_card, text="AVAILABLE AUDIO QUALITIES", font=FONT_LABEL, bg=COLOR_SURFACE, fg=COLOR_SECONDARY)
         lbl_audio_q.pack(anchor="w", padx=15, pady=(15, 5))
         
-        self.scroll_audio = ScrollableFrame(audio_card)
-        self.scroll_audio.pack(fill="both", expand=True, padx=10, pady=(0, 15))
+        self.audio_list_frame = tk.Frame(audio_card, bg=COLOR_SURFACE)
+        self.audio_list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 15))
 
         # 4. Download Action Panel
         action_panel = tk.Frame(self.results_container, bg=COLOR_SURFACE, highlightbackground=COLOR_BORDER, highlightthickness=1)
@@ -409,7 +411,7 @@ class YouTubeDownloaderApp(tk.Tk):
 
         # Footer
         lbl_footer = tk.Label(
-            self,
+            self.content_wrapper,
             text="Powered by FFmpeg",
             font=FONT_STATUS,
             bg=COLOR_BG,
@@ -418,9 +420,9 @@ class YouTubeDownloaderApp(tk.Tk):
         lbl_footer.pack(side="bottom", pady=15)
 
     def clear_cards(self):
-        for widget in self.scroll_video.scrollable_frame.winfo_children():
+        for widget in self.video_list_frame.winfo_children():
             widget.destroy()
-        for widget in self.scroll_audio.scrollable_frame.winfo_children():
+        for widget in self.audio_list_frame.winfo_children():
             widget.destroy()
         self.cards.clear()
         self.selected_mode = None
@@ -535,12 +537,12 @@ class YouTubeDownloaderApp(tk.Tk):
 
             videos = message.get("video", [])
             for v in videos:
-                card = StitchQualityCard(self.scroll_video.scrollable_frame, mode="video", stream_info=v, on_select=self.on_card_select)
+                card = StitchQualityCard(self.video_list_frame, mode="video", stream_info=v, on_select=self.on_card_select)
                 self.cards.append(card)
                 
             audios = message.get("audio", [])
             for a in audios:
-                card = StitchQualityCard(self.scroll_audio.scrollable_frame, mode="mp3", stream_info=a, on_select=self.on_card_select)
+                card = StitchQualityCard(self.audio_list_frame, mode="mp3", stream_info=a, on_select=self.on_card_select)
                 self.cards.append(card)
 
         elif status_type == "progress":
