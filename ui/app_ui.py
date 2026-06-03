@@ -6,14 +6,14 @@ from core.helpers import get_default_download_path, resource_path
 import os
 
 # --- DESIGN SYSTEM ---
-COLOR_BG = "#121212"           # Main Window Background
-COLOR_SURFACE = "#1E1E1E"      # Card/Container Background
-COLOR_ACCENT = "#BB86FC"       # Primary Action (Soft Purple)
-COLOR_ACCENT_HOVER = "#9F70E0" # Slightly darker for hover
-COLOR_INPUT_BG = "#2C2C2C"     # Input Field Background
-COLOR_TEXT = "#E0E0E0"         # Primary Text
-COLOR_TEXT_MUTED = "#888888"   # Secondary Text
-COLOR_BORDER = "#333333"       # Subtle Borders
+COLOR_BG = "#121212"
+COLOR_SURFACE = "#1E1E1E"
+COLOR_ACCENT = "#BB86FC"
+COLOR_ACCENT_HOVER = "#9F70E0"
+COLOR_INPUT_BG = "#2C2C2C"
+COLOR_TEXT = "#E0E0E0"
+COLOR_TEXT_MUTED = "#888888"
+COLOR_BORDER = "#333333"
 
 FONT_FAMILY = "Segoe UI"
 FONT_TITLE = (FONT_FAMILY, 22, "bold")
@@ -29,7 +29,6 @@ class ModernButton(tk.Button):
         self.hover_bg = kwargs.pop("hover_bg", COLOR_ACCENT_HOVER)
         self.default_fg = kwargs.get("fg", "#121212")
         
-        # Enforce flat premium style
         kwargs.update({
             "relief": "flat",
             "borderwidth": 0,
@@ -43,10 +42,12 @@ class ModernButton(tk.Button):
         self.bind("<Leave>", self.on_leave)
 
     def on_enter(self, e):
-        self["bg"] = self.hover_bg
+        if self['state'] != 'disabled':
+            self["bg"] = self.hover_bg
 
     def on_leave(self, e):
-        self["bg"] = self.default_bg
+        if self['state'] != 'disabled':
+            self["bg"] = self.default_bg
 
 class ModernEntry(tk.Frame):
     """A styled entry field with a border and padding."""
@@ -59,7 +60,7 @@ class ModernEntry(tk.Frame):
             font=FONT_INPUT,
             bg=COLOR_INPUT_BG,
             fg=COLOR_TEXT,
-            insertbackground="white", # Cursor color
+            insertbackground="white",
             relief="flat",
             bd=0
         )
@@ -70,11 +71,10 @@ class YouTubeDownloaderApp(tk.Tk):
         super().__init__()
 
         self.title("YouTube Video Downloader")
-        self.geometry("650x500")
+        self.geometry("650x800")
         self.configure(bg=COLOR_BG)
         self.resizable(False, False)
 
-        # Icon setup
         try:
             icon_path = resource_path("assets/icon.ico")
             if os.path.exists(icon_path):
@@ -82,7 +82,6 @@ class YouTubeDownloaderApp(tk.Tk):
         except Exception:
             pass
 
-        # Core Logic initialization
         self.downloader = None
         try:
             download_path = get_default_download_path()
@@ -90,23 +89,21 @@ class YouTubeDownloaderApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Initialization Error", f"Could not initialize core:\n{e}")
 
-        # State Variables
         self.url_var = tk.StringVar()
         self.download_mode = tk.StringVar(value="video")
         self.status_var = tk.StringVar(value="Ready to download")
         self.progress_var = tk.DoubleVar(value=0)
 
-        # Style configuration for ttk widgets
-        self.configure_styles()
+        self.video_streams_map = {}
+        self.audio_streams_map = {}
 
-        # Build UI
+        self.configure_styles()
         self.create_widgets()
 
     def configure_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
         
-        # Custom TProgressbar
         style.configure(
             "Modern.Horizontal.TProgressbar",
             troughcolor=COLOR_SURFACE,
@@ -114,58 +111,89 @@ class YouTubeDownloaderApp(tk.Tk):
             borderwidth=0,
             thickness=6
         )
-        
-        # Custom Radiobuttons (using ttk for better styling control if needed, but tk is often easier for dark mode background matching on Windows)
-        # We will use tk.Radiobutton for exact color matching.
 
     def create_widgets(self):
-        # --- Main Container (Centered Card) ---
         main_container = tk.Frame(self, bg=COLOR_BG)
-        main_container.pack(expand=True, fill="both", padx=60, pady=40)
+        main_container.pack(expand=True, fill="both", padx=60, pady=20)
 
         # 1. Header Section
         header_frame = tk.Frame(main_container, bg=COLOR_BG)
-        header_frame.pack(fill="x", pady=(0, 30))
+        header_frame.pack(fill="x", pady=(0, 20))
 
-        lbl_title = tk.Label(
-            header_frame, 
-            text="YouTube Video Downloader", 
-            font=FONT_TITLE, 
-            bg=COLOR_BG, 
-            fg=COLOR_TEXT
-        )
+        lbl_title = tk.Label(header_frame, text="YouTube Video Downloader", font=FONT_TITLE, bg=COLOR_BG, fg=COLOR_TEXT)
         lbl_title.pack(side="top", anchor="center")
 
-        lbl_subtitle = tk.Label(
-            header_frame,
-            text="Premium YouTube Downloader",
-            font=(FONT_FAMILY, 10),
-            bg=COLOR_BG,
-            fg=COLOR_TEXT_MUTED
-        )
+        lbl_subtitle = tk.Label(header_frame, text="Premium YouTube Downloader", font=(FONT_FAMILY, 10), bg=COLOR_BG, fg=COLOR_TEXT_MUTED)
         lbl_subtitle.pack(side="top", anchor="center", pady=(2, 0))
 
         # 2. Input Section
         input_frame = tk.Frame(main_container, bg=COLOR_BG)
-        input_frame.pack(fill="x", pady=(0, 25))
+        input_frame.pack(fill="x", pady=(0, 15))
 
-        lbl_input = tk.Label(
-            input_frame,
-            text="VIDEO URL",
-            font=FONT_SUBTITLE,
-            bg=COLOR_BG,
-            fg=COLOR_TEXT_MUTED
-        )
+        lbl_input = tk.Label(input_frame, text="VIDEO URL", font=FONT_SUBTITLE, bg=COLOR_BG, fg=COLOR_TEXT_MUTED)
         lbl_input.pack(anchor="w", pady=(0, 8))
 
-        self.entry_field = ModernEntry(input_frame, textvariable=self.url_var)
-        self.entry_field.pack(fill="x")
+        input_control_frame = tk.Frame(input_frame, bg=COLOR_BG)
+        input_control_frame.pack(fill="x")
 
-        # 3. Format Selection
+        self.entry_field = ModernEntry(input_control_frame, textvariable=self.url_var)
+        self.entry_field.pack(side="left", fill="x", expand=True)
+
+        self.btn_enter = ModernButton(
+            input_control_frame,
+            text="ENTER",
+            font=FONT_BUTTON,
+            bg=COLOR_SURFACE,
+            fg=COLOR_TEXT,
+            hover_bg=COLOR_BORDER,
+            command=self.fetch_streams_thread
+        )
+        self.btn_enter.pack(side="right", padx=(10, 0), ipady=5, ipadx=10)
+
+        # 3. Streams Section
+        streams_frame = tk.Frame(main_container, bg=COLOR_BG)
+        streams_frame.pack(fill="x", pady=(0, 20))
+
+        # Video Qualities
+        lbl_video = tk.Label(streams_frame, text="Available Video Qualities", font=FONT_SUBTITLE, bg=COLOR_BG, fg=COLOR_TEXT_MUTED)
+        lbl_video.pack(anchor="w", pady=(0, 5))
+
+        video_list_frame = tk.Frame(streams_frame, bg=COLOR_INPUT_BG, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        video_list_frame.pack(fill="x", pady=(0, 15))
+
+        self.list_video = tk.Listbox(
+            video_list_frame, bg=COLOR_INPUT_BG, fg=COLOR_TEXT,
+            font=FONT_INPUT, selectbackground=COLOR_ACCENT, selectforeground="#121212",
+            relief="flat", bd=0, height=4, highlightthickness=0
+        )
+        self.list_video.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        
+        scroll_video = tk.Scrollbar(video_list_frame, orient="vertical", command=self.list_video.yview)
+        scroll_video.pack(side="right", fill="y")
+        self.list_video.config(yscrollcommand=scroll_video.set)
+
+        # Audio Qualities
+        lbl_audio = tk.Label(streams_frame, text="Available Audio Qualities", font=FONT_SUBTITLE, bg=COLOR_BG, fg=COLOR_TEXT_MUTED)
+        lbl_audio.pack(anchor="w", pady=(0, 5))
+
+        audio_list_frame = tk.Frame(streams_frame, bg=COLOR_INPUT_BG, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        audio_list_frame.pack(fill="x")
+
+        self.list_audio = tk.Listbox(
+            audio_list_frame, bg=COLOR_INPUT_BG, fg=COLOR_TEXT,
+            font=FONT_INPUT, selectbackground=COLOR_ACCENT, selectforeground="#121212",
+            relief="flat", bd=0, height=4, highlightthickness=0
+        )
+        self.list_audio.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        
+        scroll_audio = tk.Scrollbar(audio_list_frame, orient="vertical", command=self.list_audio.yview)
+        scroll_audio.pack(side="right", fill="y")
+        self.list_audio.config(yscrollcommand=scroll_audio.set)
+
+        # 4. Format Selection
         options_frame = tk.Frame(main_container, bg=COLOR_BG)
-        options_frame.pack(fill="x", pady=(0, 30))
+        options_frame.pack(fill="x", pady=(0, 20))
 
-        # We use a frame to center the radio buttons
         radio_container = tk.Frame(options_frame, bg=COLOR_BG)
         radio_container.pack(anchor="center")
 
@@ -178,11 +206,11 @@ class YouTubeDownloaderApp(tk.Tk):
                 font=(FONT_FAMILY, 10),
                 bg=COLOR_BG,
                 fg=COLOR_TEXT,
-                selectcolor=COLOR_BG,       # Background when selected
-                activebackground=COLOR_BG,  # Background when hovering
+                selectcolor=COLOR_BG,
+                activebackground=COLOR_BG,
                 activeforeground=COLOR_ACCENT,
                 bd=0,
-                indicatoron=1, # Standard circle
+                indicatoron=1,
                 cursor="hand2"
             )
 
@@ -192,19 +220,19 @@ class YouTubeDownloaderApp(tk.Tk):
         rb_audio = create_radio("High Quality MP3", "mp3")
         rb_audio.pack(side="left", padx=20)
 
-        # 4. Action Button
+        # 5. Action Button
         self.btn_download = ModernButton(
             main_container,
             text="DOWNLOAD CONTENT",
             font=FONT_BUTTON,
             bg=COLOR_ACCENT,
-            fg="#121212", # Dark text on bright button
+            fg="#121212",
             hover_bg=COLOR_ACCENT_HOVER,
             command=self.start_download_thread
         )
-        self.btn_download.pack(fill="x", pady=(0, 25), ipady=6)
+        self.btn_download.pack(fill="x", pady=(0, 20), ipady=6)
 
-        # 5. Status & Progress Section
+        # 6. Status & Progress Section
         status_frame = tk.Frame(main_container, bg=COLOR_BG)
         status_frame.pack(fill="x")
 
@@ -233,7 +261,34 @@ class YouTubeDownloaderApp(tk.Tk):
             bg=COLOR_BG,
             fg="#333333"
         )
-        lbl_footer.pack(side="bottom", pady=15)
+        lbl_footer.pack(side="bottom", pady=10)
+
+    def fetch_streams_thread(self):
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Input Required", "Please paste a valid YouTube URL first.")
+            return
+
+        if not self.downloader:
+            messagebox.showerror("System Error", "Downloader core failed to initialize.")
+            return
+
+        self.btn_enter.config(state="disabled")
+        self.status_var.set("Fetching streams...")
+        self.progress_var.set(0)
+
+        self.list_video.delete(0, tk.END)
+        self.list_audio.delete(0, tk.END)
+        self.video_streams_map.clear()
+        self.audio_streams_map.clear()
+
+        threading.Thread(target=self.run_fetch_streams, args=(url,), daemon=True).start()
+
+    def run_fetch_streams(self, url):
+        def ui_callback(status_type, message, progress):
+            self.after(0, lambda: self.handle_callback(status_type, message, progress))
+        
+        self.downloader.fetch_streams(url, ui_callback)
 
     def start_download_thread(self):
         url = self.url_var.get().strip()
@@ -245,28 +300,60 @@ class YouTubeDownloaderApp(tk.Tk):
             messagebox.showerror("System Error", "Downloader core failed to initialize.")
             return
 
+        mode = self.download_mode.get()
+        selected_itag = None
+
+        if mode == "video":
+            selection = self.list_video.curselection()
+            if not selection:
+                messagebox.showwarning("Selection Required", "Please select a Video Quality or fetch streams first.")
+                return
+            selected_itag = self.video_streams_map[selection[0]]
+        else:
+            selection = self.list_audio.curselection()
+            if not selection:
+                messagebox.showwarning("Selection Required", "Please select an Audio Quality or fetch streams first.")
+                return
+            selected_itag = self.audio_streams_map[selection[0]]
+
         # UI State: Downloading
         self.btn_download.config(state="disabled", text="PROCESSING...", bg=COLOR_SURFACE, fg=COLOR_TEXT_MUTED)
         self.entry_field.entry.config(state="disabled")
+        self.btn_enter.config(state="disabled")
+        self.list_video.config(state="disabled")
+        self.list_audio.config(state="disabled")
         self.status_var.set("Initializing request...")
         self.progress_var.set(0)
 
-        # Start background thread
-        mode = self.download_mode.get()
-        threading.Thread(target=self.run_download, args=(url, mode), daemon=True).start()
+        threading.Thread(target=self.run_download, args=(url, mode, selected_itag), daemon=True).start()
 
-    def run_download(self, url, mode):
-        # Bridge to Tkinter main loop using after()
+    def run_download(self, url, mode, itag):
         def ui_callback(status_type, message, progress):
             self.after(0, lambda: self.handle_callback(status_type, message, progress))
 
         if mode == "video":
-            self.downloader.download_video(url, ui_callback)
+            self.downloader.download_video(url, ui_callback, video_itag=itag)
         else:
-            self.downloader.download_mp3(url, ui_callback)
+            self.downloader.download_mp3(url, ui_callback, audio_itag=itag)
 
     def handle_callback(self, status_type, message, progress):
-        if status_type == "progress":
+        if status_type == "streams_fetched":
+            self.btn_enter.config(state="normal")
+            self.status_var.set("Streams fetched successfully.")
+            
+            videos = message.get("video", [])
+            for idx, v in enumerate(videos):
+                display_text = f"{v['resolution']} - {v['mime_type']} - {v['filesize_str']}"
+                self.list_video.insert(tk.END, display_text)
+                self.video_streams_map[idx] = v['itag']
+                
+            audios = message.get("audio", [])
+            for idx, a in enumerate(audios):
+                display_text = f"{a['abr']} - {a['mime_type']} - {a['filesize_str']}"
+                self.list_audio.insert(tk.END, display_text)
+                self.audio_streams_map[idx] = a['itag']
+
+        elif status_type == "progress":
             self.progress_var.set(progress)
             self.status_var.set(message)
         elif status_type == "info":
@@ -279,10 +366,15 @@ class YouTubeDownloaderApp(tk.Tk):
         elif status_type == "error":
             self.progress_var.set(0)
             self.status_var.set("Error occurred")
-            messagebox.showerror("Download Failed", message)
+            self.btn_enter.config(state="normal")
+            messagebox.showerror("Error", message)
             self.reset_ui()
 
     def reset_ui(self):
         self.btn_download.config(state="normal", text="DOWNLOAD CONTENT", bg=COLOR_ACCENT, fg="#121212")
         self.entry_field.entry.config(state="normal")
-        self.status_var.set("Ready to download")
+        self.btn_enter.config(state="normal")
+        self.list_video.config(state="normal")
+        self.list_audio.config(state="normal")
+        self.status_var.set("Ready")
+
