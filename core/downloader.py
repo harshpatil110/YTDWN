@@ -24,6 +24,46 @@ class Downloader:
             raise FileNotFoundError("FFmpeg not found. Please ensure FFmpeg is installed and added to PATH.")
         logger.info(f"Downloader initialized. Download path: {self.download_path}")
 
+    def _get_youtube_client(self, url, on_progress=None, max_retries=3):
+        """
+        Normalizes the URL and instantiates the YouTube client using the WEB client,
+        which automatically handles PO-token generation (via Node.js) in pytubefix >= 10.11.0.
+        Includes a retry mechanism.
+        """
+        from pytubefix.extract import video_id
+        
+        try:
+            vid = video_id(url)
+            normalized_url = f"https://www.youtube.com/watch?v={vid}"
+        except Exception:
+            logger.warning(f"Could not extract standard video_id from {url}. Using original url.")
+            normalized_url = url
+            
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                if attempt > 1:
+                    import time
+                    logger.info(f"YouTube client initialization attempt {attempt}/{max_retries}...")
+                    time.sleep(2 ** (attempt - 1))
+                
+                yt = YouTube(
+                    normalized_url, 
+                    client='WEB', 
+                    on_progress_callback=on_progress
+                )
+                return yt
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Attempt {attempt} failed: {type(e).__name__} - {str(e)}")
+                
+                error_str = str(e).lower()
+                if "unavailable" in error_str or "private" in error_str or "login" in error_str or "age" in error_str:
+                    break
+        
+        raise last_error
+
     def _progress_hook(self, stream, chunk, bytes_remaining, total_size, callback):
         if callback:
             try:
@@ -34,9 +74,11 @@ class Downloader:
 
     def fetch_streams(self, url, status_callback):
         try:
-            logger.info(f"Fetching streams for URL: {url}")
+            logger.info(f"Starting metadata extraction for URL: {url}")
             status_callback("info", "Fetching streams...", 0)
-            yt = YouTube(url)
+            
+            yt = self._get_youtube_client(url)
+            logger.info("Metadata extraction successful.")
 
             # Extract full video metadata
             video_info = {
@@ -90,18 +132,95 @@ class Downloader:
             status_callback("streams_fetched", payload, 100)
             
         except Exception as e:
-            logger.exception("Failed to fetch streams")
-            status_callback("error", f"Failed to fetch streams: {e}", 0)
+            error_msg = str(e)
+            error_type = type(e).__name__
+            logger.error(f"Failed to fetch streams: {error_type} - {error_msg}")
+            
+            # Map known exceptions to user-friendly messages
+            user_friendly_msg = "Unable to fetch YouTube streams."
+            if "BotDetection" in error_type or "bot" in error_msg.lower():
+                user_friendly_msg += "\n\nYouTube rejected the automated request (Bot Detection). Please try again in a few moments."
+            elif "403" in error_msg:
+                user_friendly_msg += "\n\nHTTP 403 Forbidden. YouTube blocked access to this stream."
+            elif "429" in error_msg:
+                user_friendly_msg += "\n\nHTTP 429 Too Many Requests. You are being rate-limited by YouTube."
+            elif "unavailable" in error_msg.lower() or "private" in error_msg.lower():
+                user_friendly_msg += "\n\nThis video is private, deleted, or otherwise unavailable."
+            elif "age" in error_msg.lower():
+                user_friendly_msg += "\n\nThis video is age-restricted and requires authentication."
+            elif "regex" in error_msg.lower() or "match" in error_msg.lower():
+                user_friendly_msg += "\n\nFailed to parse YouTube page. The library may be outdated."
+            else:
+                user_friendly_msg += f"\n\nAn unexpected error occurred:\n{error_type}: {error_msg}"
+                
+            status_callback("error", user_friendly_msg, 0)
+
+
+    def _download_stream_with_retry(self, url, stream_itag, output_path, filename, status_callback, on_progress):
+        """
+        Attempts to download a stream with SABR/PoToken retry logic and temp file cleanup.
+        """
+        from pytubefix.exceptions import SABRError
+        
+        last_error = None
+        temp_file = os.path.join(output_path, filename)
+        max_retries = 3
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Cleanup partial file
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                
+                logger.info(f"Starting download attempt {attempt}/{max_retries} for itag {stream_itag}")
+                yt = self._get_youtube_client(url, on_progress=on_progress)
+                
+                if stream_itag:
+                    stream = yt.streams.get_by_itag(stream_itag)
+                else:
+                    raise ValueError("stream_itag is required for _download_stream_with_retry")
+                    
+                if not stream:
+                    raise ValueError(f"Stream {stream_itag} no longer available.")
+                
+                stream.download(output_path=output_path, filename=filename)
+                
+                if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
+                    raise IOError("Downloaded file is missing or empty.")
+                    
+                return True
+                
+            except SABRError as e:
+                last_error = e
+                logger.warning(f"SABR download failed on attempt {attempt}: {e}")
+                if attempt < max_retries:
+                    logger.info("Refreshing stream/token state...")
+                    time.sleep(2)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Download error on attempt {attempt}: {type(e).__name__} - {e}")
+                if attempt < max_retries:
+                    time.sleep(2)
+                    
+        # Clean up partial if completely failed
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+                
+        raise last_error
 
     def download_video(self, url, status_callback, video_itag=None):
         try:
+            from pytubefix.exceptions import SABRError
             logger.info(f"Starting video download for URL: {url}, itag: {video_itag}")
             status_callback("info", "Fetching video info...", 0)
             
             def on_progress(stream, chunk, bytes_remaining):
                 self._progress_hook(stream, chunk, bytes_remaining, stream.filesize, status_callback)
 
-            yt = YouTube(url, on_progress_callback=on_progress)
+            yt = self._get_youtube_client(url, on_progress=on_progress)
             title = safe_filename(getattr(yt, 'title', 'video'))
             
             if video_itag:
@@ -113,6 +232,8 @@ class Downloader:
                 logger.warning("Could not find video stream.")
                 status_callback("error", "Could not find video stream.", 0)
                 return
+                
+            actual_video_itag = video_stream.itag
 
             if video_stream.includes_audio_track:
                 res = getattr(video_stream, 'resolution', 'Unknown')
@@ -121,8 +242,11 @@ class Downloader:
                 
                 final_output = os.path.join(self.download_path, f"{title}.mp4")
                 status_callback("info", "Downloading Video...", 0)
-                logger.info(f"Downloading progressive stream to {final_output}")
-                video_stream.download(output_path=self.download_path, filename=os.path.basename(final_output))
+                
+                self._download_stream_with_retry(
+                    url, actual_video_itag, self.download_path, os.path.basename(final_output), status_callback, on_progress
+                )
+                
                 logger.info("Download complete.")
                 status_callback("success", f"Successfully downloaded: {title}.mp4", 100)
             else:
@@ -135,6 +259,8 @@ class Downloader:
                     logger.warning("Could not find audio stream to merge.")
                     status_callback("error", "Could not find suitable audio stream to merge.", 0)
                     return
+                    
+                actual_audio_itag = audio_stream.itag
 
                 res = getattr(video_stream, 'resolution', 'Unknown')
                 abr = getattr(audio_stream, 'abr', 'Unknown')
@@ -146,12 +272,14 @@ class Downloader:
                 final_output = os.path.join(self.download_path, f"{title}.mp4")
 
                 status_callback("info", "Downloading Video Stream...", 0)
-                logger.info(f"Downloading adaptive video stream to {temp_video}")
-                video_stream.download(output_path=self.download_path, filename=os.path.basename(temp_video))
+                self._download_stream_with_retry(
+                    url, actual_video_itag, self.download_path, os.path.basename(temp_video), status_callback, on_progress
+                )
                 
                 status_callback("info", "Downloading Audio Stream...", 0)
-                logger.info(f"Downloading adaptive audio stream to {temp_audio}")
-                audio_stream.download(output_path=self.download_path, filename=os.path.basename(temp_audio))
+                self._download_stream_with_retry(
+                    url, actual_audio_itag, self.download_path, os.path.basename(temp_audio), status_callback, on_progress
+                )
 
                 status_callback("info", "Merging Video and Audio...", 100)
                 logger.info("Merging audio and video using FFmpeg...")
@@ -165,17 +293,23 @@ class Downloader:
 
         except Exception as e:
             logger.exception("Video download failed.")
-            status_callback("error", str(e), 0)
+            error_msg = str(e)
+            if "SABRError" in type(e).__name__ or "PoToken INVALID" in error_msg:
+                user_msg = "YTDWN could not download this stream because YouTube's current stream protection rejected the download request. Please try again or select another available quality."
+            else:
+                user_msg = f"Failed to download video: {type(e).__name__} - {e}"
+            status_callback("error", user_msg, 0)
 
     def download_mp3(self, url, status_callback, audio_itag=None):
         try:
+            from pytubefix.exceptions import SABRError
             logger.info(f"Starting audio download for URL: {url}, itag: {audio_itag}")
             status_callback("info", "Fetching audio info...", 0)
             
             def on_progress(stream, chunk, bytes_remaining):
                 self._progress_hook(stream, chunk, bytes_remaining, stream.filesize, status_callback)
 
-            yt = YouTube(url, on_progress_callback=on_progress)
+            yt = self._get_youtube_client(url, on_progress=on_progress)
             title = safe_filename(getattr(yt, 'title', 'audio'))
 
             if audio_itag:
@@ -187,6 +321,8 @@ class Downloader:
                 logger.warning("No audio stream found.")
                 status_callback("error", "No audio stream found.", 0)
                 return
+                
+            actual_audio_itag = audio_stream.itag
 
             abr = getattr(audio_stream, 'abr', 'Unknown')
             info_msg = f"Found: {getattr(yt, 'title', 'Unknown')}\nAudio: {abr}"
@@ -196,8 +332,10 @@ class Downloader:
             final_output = os.path.join(self.download_path, f"{title}.mp3")
 
             status_callback("info", "Downloading Audio...", 0)
-            logger.info(f"Downloading audio stream to {temp_audio}")
-            audio_stream.download(output_path=self.download_path, filename=os.path.basename(temp_audio))
+            
+            self._download_stream_with_retry(
+                url, actual_audio_itag, self.download_path, os.path.basename(temp_audio), status_callback, on_progress
+            )
 
             status_callback("info", "Converting to MP3...", 100)
             logger.info("Converting audio to MP3 using FFmpeg...")
@@ -210,4 +348,9 @@ class Downloader:
 
         except Exception as e:
             logger.exception("Audio download failed.")
-            status_callback("error", str(e), 0)
+            error_msg = str(e)
+            if "SABRError" in type(e).__name__ or "PoToken INVALID" in error_msg:
+                user_msg = "YTDWN could not download this stream because YouTube's current stream protection rejected the download request. Please try again or select another available quality."
+            else:
+                user_msg = f"Failed to download audio: {type(e).__name__} - {e}"
+            status_callback("error", user_msg, 0)
