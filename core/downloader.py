@@ -80,16 +80,29 @@ class Downloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
 
-    def _format_stream_info(self, fmt, is_video=True):
+    def _format_stream_info(self, fmt, is_video=True, duration=0):
         """Convert a yt-dlp format dict to the stream_info dict the UI expects."""
+        # Determine filesize: prefer exact, then approx, then estimate from bitrate
+        filesize = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        estimated = False
+        if not filesize and duration:
+            tbr = fmt.get('tbr') or 0
+            if tbr:
+                # tbr is in kbps, convert to bytes: tbr * 1000 / 8 * duration
+                filesize = int(tbr * 1000 / 8 * duration)
+                estimated = True
+
+        if filesize:
+            size_str = ('~ ' if estimated else '') + format_size(filesize)
+        else:
+            size_str = 'Unknown Size'
+
         info = {
             'itag': fmt.get('format_id', ''),
             'mime_type': fmt.get('ext', ''),
             'format': (fmt.get('ext', '')).upper(),
-            'filesize': fmt.get('filesize') or fmt.get('filesize_approx') or 0,
-            'filesize_str': format_size(
-                fmt.get('filesize') or fmt.get('filesize_approx') or 0
-            ),
+            'filesize': filesize,
+            'filesize_str': size_str,
         }
         if is_video:
             height = fmt.get('height', 0)
@@ -126,6 +139,7 @@ class Downloader:
 
             # Collect video-only and audio-only formats
             all_formats = info.get('formats', [])
+            duration = info.get('duration') or 0
 
             # Video-only formats (has video codec, no audio codec)
             video_fmts = []
@@ -135,17 +149,20 @@ class Downloader:
                 if vcodec != 'none' and acodec == 'none':
                     video_fmts.append(f)
 
-            # Sort by height descending
-            video_fmts.sort(key=lambda f: f.get('height', 0), reverse=True)
+            # Sort by height descending, then prefer formats with known filesize
+            def _video_sort_key(f):
+                has_size = 1 if (f.get('filesize') or f.get('filesize_approx')) else 0
+                return (f.get('height', 0), has_size)
+            video_fmts.sort(key=_video_sort_key, reverse=True)
 
-            # Deduplicate by resolution — keep the best (first) per height
+            # Deduplicate by resolution - keep the best (first) per height
             unique_videos = []
             seen_res = set()
             for f in video_fmts:
                 h = f.get('height', 0)
                 if h and h not in seen_res:
                     seen_res.add(h)
-                    unique_videos.append(self._format_stream_info(f, is_video=True))
+                    unique_videos.append(self._format_stream_info(f, is_video=True, duration=duration))
 
             logger.info(f"Extracted {len(unique_videos)} unique video streams.")
 
@@ -158,7 +175,10 @@ class Downloader:
                     audio_fmts.append(f)
 
             # Sort by abr descending
-            audio_fmts.sort(key=lambda f: f.get('abr', 0) or 0, reverse=True)
+            def _audio_sort_key(f):
+                has_size = 1 if (f.get('filesize') or f.get('filesize_approx')) else 0
+                return (f.get('abr', 0) or 0, has_size)
+            audio_fmts.sort(key=_audio_sort_key, reverse=True)
 
             # Deduplicate by abr
             unique_audios = []
@@ -168,7 +188,7 @@ class Downloader:
                 abr_key = int(abr) if abr else 0
                 if abr_key and abr_key not in seen_abr:
                     seen_abr.add(abr_key)
-                    unique_audios.append(self._format_stream_info(f, is_video=False))
+                    unique_audios.append(self._format_stream_info(f, is_video=False, duration=duration))
 
             logger.info(f"Extracted {len(unique_audios)} unique audio streams.")
 
